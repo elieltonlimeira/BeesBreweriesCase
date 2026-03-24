@@ -1,0 +1,38 @@
+[project]
+name = "bees-breweries-case"
+version = "1.0.0"
+description = "Data pipeline for Open Brewery DB — medallion architecture (Bronze/Silver/Gold)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: fast unit tests (no Spark startup)",
+    "integration: slower tests (Spark or mocked S3)",
+    "slow: tests requiring full pipeline execution",
+]
+addopts = "--cov=src --cov-report=term-missing --cov-report=xml -v"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*", "dags/*"]
+
+[tool.coverage.report]
+fail_under = 80
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
