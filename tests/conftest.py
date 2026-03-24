@@ -35,23 +35,22 @@ os.environ.setdefault("API_MAX_RETRIES", "2")
 @pytest.fixture(scope="session")
 def spark():
     """
-    Session-scoped SparkSession running in local mode.
+    Session-scoped SparkSession running in local mode via Spark Connect.
 
-    - local[2]: uses 2 threads (enough for unit tests, avoids GIL issues)
-    - shuffle.partitions=2: drastically reduces overhead for tiny datasets
-    - ui.enabled=false: no Spark UI server started during tests
+    Uses Spark Connect (remote("local")) which communicates over gRPC instead
+    of py4j sockets — required for Python 3.12+ compatibility where the classic
+    PySpark worker socket protocol is broken.
+
+    - shuffle.partitions=2: reduces overhead for tiny test datasets
     """
     from pyspark.sql import SparkSession
 
     session = (
-        SparkSession.builder.master("local[2]")
-        .appName("brewery-tests")
+        SparkSession.builder.remote("local")
         .config("spark.sql.shuffle.partitions", "2")
-        .config("spark.ui.enabled", "false")
-        .config("spark.driver.bindAddress", "127.0.0.1")
+        .appName("brewery-tests")
         .getOrCreate()
     )
-    session.sparkContext.setLogLevel("ERROR")
     yield session
     session.stop()
 
