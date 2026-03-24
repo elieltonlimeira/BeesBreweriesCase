@@ -1,5 +1,3 @@
-version: "3.8"
-
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -7,18 +5,21 @@ x-airflow-common: &airflow-common
   image: bees-airflow:latest
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    # NOTE: for production, switch to CeleryExecutor and add Redis + workers
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-airflow}@postgres/airflow
     AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY}
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
     AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "30"
-    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-    AIRFLOW__WEBSERVER__SECRET_KEY: ${FERNET_KEY}
+    # Do NOT expose full config in production (contains DB credentials and Fernet key)
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "non-sensitive-only"
+    # Use a dedicated secret separate from the Fernet key
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${WEBSERVER_SECRET_KEY}
     # MinIO / S3 config
     MINIO_ENDPOINT: http://minio:9000
-    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+    MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     BRONZE_BUCKET: ${BRONZE_BUCKET:-brewery-bronze}
     SILVER_BUCKET: ${SILVER_BUCKET:-brewery-silver}
     GOLD_BUCKET: ${GOLD_BUCKET:-brewery-gold}
@@ -26,7 +27,6 @@ x-airflow-common: &airflow-common
     API_BASE_URL: https://api.openbrewerydb.org/v1/breweries
     API_PAGE_SIZE: "200"
     API_MAX_RETRIES: "3"
-    API_RETRY_DELAY_SECONDS: "5"
   volumes:
     - ./dags:/opt/airflow/dags
     - ./src:/opt/airflow/src
@@ -44,7 +44,7 @@ services:
     container_name: bees-postgres
     environment:
       POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
       POSTGRES_DB: airflow
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -56,12 +56,13 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:latest
+    # Pinned to a specific release for reproducible builds
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
     container_name: bees-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -75,22 +76,23 @@ services:
     restart: unless-stopped
 
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2024-04-18T16-45-29Z
     container_name: bees-minio-init
     depends_on:
       minio:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 $${MINIO_ACCESS_KEY:-minioadmin} $${MINIO_SECRET_KEY:-minioadmin};
+        mc alias set local http://minio:9000 $${MINIO_ACCESS_KEY} $${MINIO_SECRET_KEY};
         mc mb --ignore-existing local/${BRONZE_BUCKET:-brewery-bronze};
         mc mb --ignore-existing local/${SILVER_BUCKET:-brewery-silver};
         mc mb --ignore-existing local/${GOLD_BUCKET:-brewery-gold};
         echo 'Buckets initialized successfully.';
       "
     environment:
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+    restart: on-failure
 
   airflow-init:
     <<: *airflow-common
@@ -132,6 +134,11 @@ services:
     <<: *airflow-common
     container_name: bees-airflow-scheduler
     command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname $(hostname)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     depends_on:
       airflow-init:
         condition: service_completed_successfully

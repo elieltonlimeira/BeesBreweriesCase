@@ -1,31 +1,31 @@
-import os
+import functools
 from typing import Optional
 
 import boto3
 from botocore.client import BaseClient
 from botocore.exceptions import ClientError
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+from src.utils.config import storage_config
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
 
 
+@functools.lru_cache(maxsize=1)
 def get_s3_client() -> BaseClient:
     """
-    Return a boto3 S3 client configured for MinIO (or AWS S3 in production).
+    Return a cached boto3 S3 client configured for MinIO (or AWS S3).
 
-    All connection parameters come from environment variables so no credentials
-    are ever hardcoded.
+    The client is created once and reused — boto3 clients are thread-safe.
+    Credentials come from the centralized config module.
     """
-    endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
-    access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-    secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-
+    cfg = storage_config()
     return boto3.client(
         "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
+        endpoint_url=cfg.endpoint,
+        aws_access_key_id=cfg.access_key,
+        aws_secret_access_key=cfg.secret_key,
         region_name="us-east-1",  # required by boto3, ignored by MinIO
     )
 
@@ -36,11 +36,17 @@ def object_exists(client: BaseClient, bucket: str, key: str) -> bool:
         client.head_object(Bucket=bucket, Key=key)
         return True
     except ClientError as exc:
-        if exc.response["Error"]["Code"] == "404":
+        code = exc.response["Error"]["Code"]
+        if code in ("404", "NoSuchKey"):
             return False
         raise
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=15),
+    reraise=True,
+)
 def upload_bytes(
     client: BaseClient,
     data: bytes,
@@ -50,10 +56,10 @@ def upload_bytes(
     overwrite: bool = True,
 ) -> Optional[int]:
     """
-    Upload raw bytes to S3/MinIO.
+    Upload raw bytes to S3/MinIO with automatic retry on transient errors.
 
-    Returns the number of bytes uploaded, or None if skipped (already exists
-    and overwrite=False).
+    Returns the number of bytes uploaded, or None if skipped because the
+    object already exists and overwrite=False.
     """
     if not overwrite and object_exists(client, bucket, key):
         log.info("object_skipped_already_exists", bucket=bucket, key=key)
@@ -69,8 +75,13 @@ def upload_bytes(
     return len(data)
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=15),
+    reraise=True,
+)
 def list_objects(client: BaseClient, bucket: str, prefix: str) -> list[str]:
-    """Return a list of object keys under the given prefix."""
+    """Return a list of all object keys under the given prefix (paginated)."""
     paginator = client.get_paginator("list_objects_v2")
     keys: list[str] = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):

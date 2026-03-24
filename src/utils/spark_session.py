@@ -1,34 +1,38 @@
-import os
-
 from pyspark.sql import SparkSession
+
+from src.utils.config import storage_config
 
 
 def get_spark_session(app_name: str = "BreweryPipeline") -> SparkSession:
     """
     Build and return a SparkSession configured for S3A (MinIO/S3) access.
 
-    S3A credentials and endpoint are read from environment variables so the
-    same code runs locally (MinIO) and in production (AWS S3) without changes.
+    Credentials are read via the centralized config module, which validates
+    that all required env vars are set before the session is created.
+
+    The session uses getOrCreate(), so calling this multiple times in the
+    same JVM process always returns the same session (Spark singleton).
+    App name is set only on first creation.
     """
-    endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
-    access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-    secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+    cfg = storage_config()
 
     spark = (
         SparkSession.builder.appName(app_name)
-        # S3A connector — use path-style access required for MinIO
-        .config("spark.hadoop.fs.s3a.endpoint", endpoint)
-        .config("spark.hadoop.fs.s3a.access.key", access_key)
-        .config("spark.hadoop.fs.s3a.secret.key", secret_key)
+        # S3A connector — path-style access is required for MinIO
+        .config("spark.hadoop.fs.s3a.endpoint", cfg.endpoint)
+        .config("spark.hadoop.fs.s3a.access.key", cfg.access_key)
+        .config("spark.hadoop.fs.s3a.secret.key", cfg.secret_key)
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config(
             "spark.hadoop.fs.s3a.aws.credentials.provider",
             "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
         )
-        # Avoid SSL errors with local MinIO
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-        # Reduce shuffle partitions for small datasets
+        # Point Spark to the pre-downloaded Hadoop AWS JARs in the Docker image
+        .config("spark.driver.extraClassPath", "/opt/spark/jars/*")
+        .config("spark.executor.extraClassPath", "/opt/spark/jars/*")
+        # Small shuffle partition count — dataset is ~9k rows, not petabytes
         .config("spark.sql.shuffle.partitions", "8")
         .getOrCreate()
     )
