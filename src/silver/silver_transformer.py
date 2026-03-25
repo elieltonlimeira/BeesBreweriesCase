@@ -130,8 +130,13 @@ def run(execution_date: str) -> dict:
     return result
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """CLI entrypoint — parses argv and delegates to run()."""
     if len(sys.argv) != 2:
         print("Usage: python -m src.silver.silver_transformer YYYY-MM-DD", file=sys.stderr)
         sys.exit(1)
     run(sys.argv[1])
+
+
+if __name__ == "__main__":
+    main()

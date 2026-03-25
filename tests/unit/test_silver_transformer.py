@@ -1,5 +1,8 @@
 """Unit tests for silver_transformer.py — all tests use in-memory Spark (no S3)."""
 
+import runpy
+from unittest.mock import MagicMock, patch
+
 import pytest
 from pyspark.sql.types import DoubleType, StringType, StructField, StructType
 
@@ -222,3 +225,132 @@ class TestMetadataColumn:
 
         dates = {r["pipeline_run_date"] for r in valid_df.collect()}
         assert dates == {date(2024, 3, 24)}
+
+
+# ---------------------------------------------------------------------------
+# I/O functions (S3 interactions tested via mocks)
+# ---------------------------------------------------------------------------
+
+class TestReadBronze:
+    @patch("src.silver.silver_transformer.storage_config")
+    def test_reads_json_from_correct_s3_path(self, mock_config):
+        mock_config.return_value = MagicMock(bronze_bucket="test-bronze")
+        mock_spark = MagicMock()
+        mock_reader = MagicMock()
+        mock_spark.read.option.return_value = mock_reader
+
+        from src.silver.silver_transformer import read_bronze
+
+        read_bronze(mock_spark, "2024-03-24")
+
+        mock_spark.read.option.assert_called_once_with("multiline", "true")
+        mock_reader.json.assert_called_once_with(
+            "s3a://test-bronze/raw/dt=2024-03-24/"
+        )
+
+
+class TestWriteSilver:
+    @patch("src.silver.silver_transformer.storage_config")
+    def test_writes_partitioned_parquet_and_returns_count(self, mock_config):
+        mock_config.return_value = MagicMock(silver_bucket="test-silver")
+        mock_df = MagicMock()
+        mock_df.count.return_value = 42
+        mock_writer = MagicMock()
+        mock_df.write.mode.return_value = mock_writer
+        mock_partitioned = MagicMock()
+        mock_writer.partitionBy.return_value = mock_partitioned
+
+        from src.silver.silver_transformer import write_silver
+
+        count = write_silver(mock_df)
+
+        mock_df.write.mode.assert_called_once_with("overwrite")
+        mock_writer.partitionBy.assert_called_once_with("country", "state_province")
+        mock_partitioned.parquet.assert_called_once_with("s3a://test-silver/breweries/")
+        assert count == 42
+
+
+class TestWriteQuarantine:
+    @patch("src.silver.silver_transformer.storage_config")
+    def test_writes_when_count_positive(self, mock_config):
+        mock_config.return_value = MagicMock(silver_bucket="test-silver")
+        mock_df = MagicMock()
+        mock_df.count.return_value = 3
+        mock_writer = MagicMock()
+        mock_df.write.mode.return_value = mock_writer
+
+        from src.silver.silver_transformer import write_quarantine
+
+        count = write_quarantine(mock_df, "2024-03-24")
+
+        mock_writer.parquet.assert_called_once_with(
+            "s3a://test-silver/quarantine/dt=2024-03-24/"
+        )
+        assert count == 3
+
+    @patch("src.silver.silver_transformer.storage_config")
+    def test_skips_write_when_empty(self, mock_config):
+        mock_config.return_value = MagicMock(silver_bucket="test-silver")
+        mock_df = MagicMock()
+        mock_df.count.return_value = 0
+
+        from src.silver.silver_transformer import write_quarantine
+
+        count = write_quarantine(mock_df, "2024-03-24")
+
+        mock_df.write.mode.assert_not_called()
+        assert count == 0
+
+
+class TestSilverRun:
+    @patch("src.silver.silver_transformer.write_quarantine", return_value=1)
+    @patch("src.silver.silver_transformer.write_silver", return_value=10)
+    @patch("src.silver.silver_transformer.transform")
+    @patch("src.silver.silver_transformer.read_bronze")
+    @patch("src.silver.silver_transformer.get_spark_session")
+    def test_orchestrates_all_steps(
+        self, mock_get_spark, mock_read, mock_transform,
+        mock_write_silver, mock_write_quarantine,
+    ):
+        mock_spark = MagicMock()
+        mock_get_spark.return_value = mock_spark
+        mock_bronze_df = MagicMock()
+        mock_read.return_value = mock_bronze_df
+        mock_valid, mock_quarantine = MagicMock(), MagicMock()
+        mock_transform.return_value = (mock_valid, mock_quarantine)
+
+        from src.silver.silver_transformer import run
+
+        result = run("2024-03-24")
+
+        mock_get_spark.assert_called_once_with("BreweryPipeline-Silver")
+        mock_read.assert_called_once_with(mock_spark, "2024-03-24")
+        mock_transform.assert_called_once_with(mock_bronze_df, "2024-03-24")
+        mock_write_silver.assert_called_once_with(mock_valid)
+        mock_write_quarantine.assert_called_once_with(mock_quarantine, "2024-03-24")
+        assert result == {
+            "valid_records": 10,
+            "quarantine_records": 1,
+            "execution_date": "2024-03-24",
+        }
+
+
+# ---------------------------------------------------------------------------
+# __main__ entrypoint
+# ---------------------------------------------------------------------------
+
+class TestSilverMain:
+    @patch("src.silver.silver_transformer.run")
+    def test_main_calls_run_with_date_arg(self, mock_run):
+        mock_run.return_value = {}
+        with patch("sys.argv", ["silver_transformer", "2024-03-24"]):
+            from src.silver.silver_transformer import main
+            main()
+        mock_run.assert_called_once_with("2024-03-24")
+
+    def test_main_exits_without_args(self):
+        with patch("sys.argv", ["silver_transformer"]):
+            with pytest.raises(SystemExit) as exc_info:
+                from src.silver.silver_transformer import main
+                main()
+            assert exc_info.value.code == 1
