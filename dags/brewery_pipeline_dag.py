@@ -48,24 +48,19 @@ _DEFAULT_ARGS = {
     "email_on_failure": False,
 }
 
-# spark-submit command template — executed inside the Airflow container which
-# has Java + Hadoop AWS JARs installed (see docker/airflow/Dockerfile)
-_SPARK_SUBMIT = (
-    "spark-submit"
-    " --master local[2]"
-    " --conf spark.sql.shuffle.partitions=8"
-    " --conf spark.hadoop.fs.s3a.endpoint=$MINIO_ENDPOINT"
-    " --conf spark.hadoop.fs.s3a.access.key=$MINIO_ACCESS_KEY"
-    " --conf spark.hadoop.fs.s3a.secret.key=$MINIO_SECRET_KEY"
-    " --conf spark.hadoop.fs.s3a.path.style.access=true"
-    " --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem"
-    " --conf 'spark.hadoop.fs.s3a.aws.credentials.provider="
-    "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider'"
-    " --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false"
-    " --driver-class-path /opt/spark/jars/*"
-    " --conf spark.executor.extraClassPath=/opt/spark/jars/*"
-    " -m {module} {execution_date}"
-)
+# Python module command — Spark config is handled inside get_spark_session()
+# which reads credentials from env vars already set in docker-compose.yml.
+# Running via `python -m` avoids spark-submit JAR detection issues in local mode.
+_SPARK_CMD = "cd /opt/airflow && python -m {module} {execution_date}"
+
+# Only pass the env vars that the Spark job actually needs.
+# Passing all Airflow env vars (env={**os.environ}) can cause Hadoop S3A to pick up
+# duration values like "60s" from Airflow internal vars, breaking getLong() parsing.
+_SPARK_ENV_KEYS = [
+    "MINIO_ENDPOINT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
+    "BRONZE_BUCKET", "SILVER_BUCKET", "GOLD_BUCKET",
+    "PYTHONPATH", "JAVA_HOME", "PATH", "HOME", "USER",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -96,15 +91,24 @@ def brewery_pipeline():
         Returns a dict pushed to XCom:
             {"total": 9383, "total_pages": 47, "per_page": 200}
         """
-        cfg = api_config()
-        meta = fetch_brewery_meta(base_url=cfg.base_url)
+        meta = fetch_brewery_meta()
         total = meta["total"]
-        total_pages = calculate_total_pages(total, cfg.page_size)
+        total_pages = calculate_total_pages(total)
+        cfg = api_config()
         return {
             "total": total,
             "total_pages": total_pages,
             "per_page": cfg.page_size,
         }
+
+    # -----------------------------------------------------------------------
+    # Task 1b — extract list of page numbers from meta (needed for .expand())
+    # -----------------------------------------------------------------------
+
+    @task
+    def get_page_numbers(meta: dict) -> list[int]:
+        """Return [1, 2, ..., total_pages] so .expand() can map over default XCom key."""
+        return list(range(1, meta["total_pages"] + 1))
 
     # -----------------------------------------------------------------------
     # Task 2 — fetch bronze pages (dynamically mapped)
@@ -117,13 +121,13 @@ def brewery_pipeline():
 
         Returns a write-result dict for XCom (key, records_written, bytes_written).
         """
-        cfg = api_config()
-        records = fetch_brewery_page(page=page, per_page=cfg.page_size, base_url=cfg.base_url)
+        ds = str(execution_date)[:10]  # pendulum.DateTime → "YYYY-MM-DD"
+        records = fetch_brewery_page(page=page)
         s3 = get_s3_client()
         return write_page(
             records=records,
             page=page,
-            execution_date=execution_date,
+            execution_date=ds,
             s3_client=s3,
             overwrite=False,  # idempotent re-runs skip existing pages
         )
@@ -140,10 +144,14 @@ def brewery_pipeline():
           - Total records written ≥ 95% of API-reported total.
         Raises DataQualityException (hard failure) on violation.
         """
+        ds = str(execution_date)[:10]  # pendulum.DateTime → "YYYY-MM-DD"
         checker = BronzeQualityChecker(s3_client=get_s3_client())
-        total_records = sum(r.get("records_written", 0) for r in page_results)
+        written = sum(r.get("records_written", 0) for r in page_results)
+        skipped = sum(1 for r in page_results if r.get("skipped"))
+        # Skipped pages already exist in S3 (idempotent re-run); estimate their count
+        total_records = written + skipped * meta["per_page"]
         checker.run_all(
-            execution_date=execution_date,
+            execution_date=ds,
             expected_pages=meta["total_pages"],
             actual_records=total_records,
             expected_total=meta["total"],
@@ -155,11 +163,11 @@ def brewery_pipeline():
 
     transform_silver = BashOperator(
         task_id="transform_silver",
-        bash_command=_SPARK_SUBMIT.format(
+        bash_command=_SPARK_CMD.format(
             module="src.silver.silver_transformer",
             execution_date="{{ ds }}",
         ),
-        env={**os.environ},
+        env={k: os.environ[k] for k in _SPARK_ENV_KEYS if k in os.environ},
     )
 
     # -----------------------------------------------------------------------
@@ -176,11 +184,12 @@ def brewery_pipeline():
 
         from src.utils.spark_session import get_spark_session
 
+        ds = str(execution_date)[:10]
         cfg = storage_config()
         spark = get_spark_session("BreweryPipeline-QC-Silver")
 
         valid_path = f"s3a://{cfg.silver_bucket}/breweries/"
-        quarantine_path = f"s3a://{cfg.silver_bucket}/quarantine/dt={execution_date}/"
+        quarantine_path = f"s3a://{cfg.silver_bucket}/quarantine/dt={ds}/"
 
         valid_df = spark.read.parquet(valid_path)
 
@@ -198,11 +207,11 @@ def brewery_pipeline():
 
     aggregate_gold = BashOperator(
         task_id="aggregate_gold",
-        bash_command=_SPARK_SUBMIT.format(
+        bash_command=_SPARK_CMD.format(
             module="src.gold.gold_aggregator",
             execution_date="{{ ds }}",
         ),
-        env={**os.environ},
+        env={k: os.environ[k] for k in _SPARK_ENV_KEYS if k in os.environ},
     )
 
     # -----------------------------------------------------------------------
@@ -216,12 +225,13 @@ def brewery_pipeline():
         """
         from src.utils.spark_session import get_spark_session
 
+        ds = str(execution_date)[:10]
         cfg = storage_config()
         spark = get_spark_session("BreweryPipeline-QC-Gold")
 
         silver_df = spark.read.parquet(f"s3a://{cfg.silver_bucket}/breweries/")
         gold_df = spark.read.parquet(
-            f"s3a://{cfg.gold_bucket}/brewery_counts/dt={execution_date}/"
+            f"s3a://{cfg.gold_bucket}/brewery_counts/dt={ds}/"
         )
 
         GoldQualityChecker().run_all(gold_df, silver_count=silver_df.count())
@@ -231,15 +241,16 @@ def brewery_pipeline():
     # -----------------------------------------------------------------------
 
     meta = fetch_meta()
+    page_numbers = get_page_numbers(meta)
 
     # Dynamic mapping: one task instance per page number
-    pages = fetch_bronze_page.expand(page=meta["total_pages"])
+    pages = fetch_bronze_page.expand(page=page_numbers)
 
     bronze_ok = validate_bronze(meta=meta, page_results=pages)
-    bronze_ok >> transform_silver
-    transform_silver >> validate_silver()
-    validate_silver() >> aggregate_gold
-    aggregate_gold >> validate_gold()
+    silver_ok = validate_silver()
+    gold_ok = validate_gold()
+
+    bronze_ok >> transform_silver >> silver_ok >> aggregate_gold >> gold_ok
 
 
 # Instantiate the DAG

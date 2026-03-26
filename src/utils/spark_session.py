@@ -34,6 +34,8 @@ def get_spark_session(app_name: str = "BreweryPipeline") -> SparkSession:
         .config("spark.executor.extraClassPath", "/opt/spark/jars/*")
         # Small shuffle partition count — dataset is ~9k rows, not petabytes
         .config("spark.sql.shuffle.partitions", "8")
+        # Explicit integer — prevents "60s" format from being passed to getLong()
+        .config("spark.hadoop.fs.s3a.threads.keepalivetime", "60")
         .getOrCreate()
     )
 

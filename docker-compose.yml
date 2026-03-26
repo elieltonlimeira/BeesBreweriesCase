@@ -12,6 +12,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
     AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "30"
+    PYTHONPATH: /opt/airflow
     # Do NOT expose full config in production (contains DB credentials and Fernet key)
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "non-sensitive-only"
     # Use a dedicated secret separate from the Fernet key
@@ -109,8 +110,8 @@ services:
           --firstname Admin
           --lastname User
           --role Admin
-          --email ${AIRFLOW_ADMIN_EMAIL:-admin@example.com} || true;
-        echo 'Airflow initialized.';
+          --email ${AIRFLOW_ADMIN_EMAIL:-admin@example.com} 2>&1 | grep -v 'already exist' || true &&
+        echo 'Airflow initialized successfully.';
       "
     restart: on-failure
 

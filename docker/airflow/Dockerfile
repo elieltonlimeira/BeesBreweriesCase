@@ -15,7 +15,7 @@ ENV PYSPARK_PYTHON=python3
 
 # Download Hadoop AWS JARs required for s3a:// filesystem support in PySpark.
 # Without these, any spark.read/write to s3a:// raises ClassNotFoundException.
-ENV SPARK_VERSION=3.5.1
+ENV SPARK_VERSION=4.1.1
 ENV HADOOP_AWS_VERSION=3.3.4
 ENV AWS_SDK_VERSION=1.12.262
 ENV SPARK_JARS_DIR=/opt/spark/jars
