@@ -1,6 +1,5 @@
 """Unit tests for gold_aggregator.py — all tests use in-memory Spark (no S3)."""
 
-import runpy
 from datetime import date
 from unittest.mock import MagicMock, patch
 

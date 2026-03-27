@@ -8,7 +8,6 @@ across the entire test run to avoid the ~30s startup cost per test.
 
 import json
 import os
-from typing import Generator
 from unittest.mock import MagicMock
 
 import pytest

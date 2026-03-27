@@ -14,15 +14,15 @@ Open Brewery DB API (~9,383 records · 47 pages × 200 records)
 │               Airflow DAG: brewery_data_pipeline          │
 │  Schedule: 0 6 * * *  ·  catchup=False  ·  max_runs=1   │
 │                                                           │
-│  fetch_meta ──► fetch_bronze_pages[0..46]                 │
+│  fetch_meta ──► get_page_numbers ──► fetch_bronze_pages   │
 │                         │                                 │
 │                 validate_bronze                            │
 │                         │                                 │
-│              transform_silver (spark-submit)              │
+│              transform_silver  (python -m)                │
 │                         │                                 │
 │                 validate_silver                            │
 │                         │                                 │
-│              aggregate_gold   (spark-submit)              │
+│              aggregate_gold    (python -m)                │
 │                         │                                 │
 │                 validate_gold                             │
 └──────────────────────────────────────────────────────────┘
@@ -157,7 +157,7 @@ BeesBreweriesCase/
 │       └── storage_client.py     # boto3 S3 client (lru_cache + retry)
 ├── tests/
 │   ├── conftest.py               # Spark Connect session + shared fixtures
-│   ├── unit/                     # 98 tests, 97% coverage
+│   ├── unit/                     # unit tests (fast, no Docker needed)
 │   └── integration/              # End-to-end + DAG integrity
 ├── docker/airflow/Dockerfile     # OpenJDK 17 JRE + Hadoop AWS JARs
 ├── docker-compose.yml
@@ -173,8 +173,7 @@ BeesBreweriesCase/
 
 | Layer | Mechanism | What's Monitored |
 |-------|-----------|-----------------|
-| Task failures | Airflow `on_failure_callback` | Any task exception |
-| SLA | Airflow SLA miss | Not complete by 08:00 UTC |
+| Task failures | Airflow task retry + exception propagation | Any task exception marks the DAG run as failed |
 | Bronze | `BronzeQualityChecker` | Page count + record count ≥95% of API total |
 | Silver | `SilverQualityChecker` | Null ID rate, brewery_type null rate, quarantine rate, coordinate bounds |
 | Gold | `GoldQualityChecker` | `SUM(brewery_count)` == Silver `COUNT(*)` |

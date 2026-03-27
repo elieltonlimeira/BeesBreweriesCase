@@ -10,7 +10,7 @@ Aggregations computed:
     - geocoded_count      : breweries with non-null latitude (have coordinates)
     - last_updated        : latest pipeline_run_date seen in the group
 
-Usage (called via spark-submit from Airflow BashOperator):
+Usage (called via python -m from Airflow BashOperator):
     python -m src.gold.gold_aggregator 2024-03-24
 """
 

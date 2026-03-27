@@ -5,9 +5,9 @@ Orchestrates the full brewery data pipeline:
     1. fetch_meta          — query the API for total brewery count → XCom
     2. fetch_bronze_pages  — paginated API fetch, one task per page (dynamic mapping)
     3. validate_bronze     — page file count + record count quality checks
-    4. transform_silver    — PySpark transformation via spark-submit (BashOperator)
+    4. transform_silver    — PySpark transformation via python -m (BashOperator)
     5. validate_silver     — null rates + quarantine rate + coordinate bounds
-    6. aggregate_gold      — PySpark aggregation via spark-submit (BashOperator)
+    6. aggregate_gold      — PySpark aggregation via python -m (BashOperator)
     7. validate_gold       — sum integrity + null brewery_type check
 
 Schedule: daily at 06:00 UTC.  No catchup (API returns current snapshot only).
@@ -29,7 +29,6 @@ from src.ingestion.brewery_api_client import (
 from src.bronze.bronze_writer import write_page
 from src.quality.data_quality import (
     BronzeQualityChecker,
-    DataQualityException,
     GoldQualityChecker,
     SilverQualityChecker,
 )
@@ -157,7 +156,7 @@ def brewery_pipeline():
         )
 
     # -----------------------------------------------------------------------
-    # Task 4 — transform silver (spark-submit via BashOperator)
+    # Task 4 — transform silver (python -m via BashOperator)
     # -----------------------------------------------------------------------
 
     transform_silver = BashOperator(
@@ -179,8 +178,6 @@ def brewery_pipeline():
         Read the silver valid + quarantine DataFrames and run quality checks.
         Requires an active SparkSession — spawns one via get_spark_session().
         """
-        from pyspark.sql import SparkSession
-
         from src.utils.spark_session import get_spark_session
 
         ds = str(execution_date)[:10]
@@ -201,7 +198,7 @@ def brewery_pipeline():
         SilverQualityChecker().run_all(valid_df, quarantine_df)
 
     # -----------------------------------------------------------------------
-    # Task 6 — aggregate gold (spark-submit via BashOperator)
+    # Task 6 — aggregate gold (python -m via BashOperator)
     # -----------------------------------------------------------------------
 
     aggregate_gold = BashOperator(

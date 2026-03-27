@@ -1,6 +1,5 @@
 """Unit tests for silver_transformer.py — all tests use in-memory Spark (no S3)."""
 
-import runpy
 from unittest.mock import MagicMock, patch
 
 import pytest

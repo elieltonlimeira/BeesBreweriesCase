@@ -14,7 +14,7 @@ Transformations applied (in order):
     7. Cast longitude / latitude to DoubleType
     8. Add pipeline_run_date metadata column
 
-Usage (called via spark-submit from Airflow BashOperator):
+Usage (called via python -m from Airflow BashOperator):
     python -m src.silver.silver_transformer 2024-03-24
 """
 
