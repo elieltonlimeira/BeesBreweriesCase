@@ -15,7 +15,7 @@ def _require(name: str) -> str:
     """Return env var value or raise a clear error if not set."""
     value = os.environ.get(name)
     if not value:
-        raise EnvironmentError(
+        raise OSError(
             f"Required environment variable '{name}' is not set. "
             "Copy .env.example to .env and fill in all values."
         )

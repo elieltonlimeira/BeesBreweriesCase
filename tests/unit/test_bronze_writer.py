@@ -1,9 +1,7 @@
 """Unit tests for bronze_writer.py."""
 
 import json
-from unittest.mock import MagicMock
 
-import pytest
 from botocore.exceptions import ClientError
 
 from src.bronze.bronze_writer import build_bronze_key, write_page

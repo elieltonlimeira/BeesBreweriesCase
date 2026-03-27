@@ -1,5 +1,4 @@
 import functools
-from typing import Optional
 
 import boto3
 from botocore.client import BaseClient
@@ -54,7 +53,7 @@ def upload_bytes(
     key: str,
     content_type: str = "application/octet-stream",
     overwrite: bool = True,
-) -> Optional[int]:
+) -> int | None:
     """
     Upload raw bytes to S3/MinIO with automatic retry on transient errors.
 

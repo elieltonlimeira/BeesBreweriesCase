@@ -21,12 +21,12 @@ from datetime import datetime, timedelta
 from airflow.decorators import dag, task
 from airflow.operators.bash import BashOperator
 
+from src.bronze.bronze_writer import write_page
 from src.ingestion.brewery_api_client import (
     calculate_total_pages,
     fetch_brewery_meta,
     fetch_brewery_page,
 )
-from src.bronze.bronze_writer import write_page
 from src.quality.data_quality import (
     BronzeQualityChecker,
     GoldQualityChecker,

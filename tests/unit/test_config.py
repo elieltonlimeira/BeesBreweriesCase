@@ -3,13 +3,10 @@
 import pytest
 
 from src.utils.config import (
-    ApiConfig,
-    StorageConfig,
     api_config,
     reset_config,
     storage_config,
 )
-
 
 # ---------------------------------------------------------------------------
 # _require

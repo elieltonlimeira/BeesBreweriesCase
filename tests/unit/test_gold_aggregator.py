@@ -7,7 +7,6 @@ import pytest
 from pyspark.sql.types import (
     DateType,
     DoubleType,
-    LongType,
     StringType,
     StructField,
     StructType,

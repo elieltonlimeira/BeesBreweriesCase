@@ -20,13 +20,13 @@ import json
 import os
 from unittest.mock import MagicMock, patch
 
+import boto3
 import pytest
 from moto import mock_aws
-import boto3
 
 from src.bronze.bronze_writer import write_page
-from src.silver.silver_transformer import transform
 from src.gold.gold_aggregator import aggregate
+from src.silver.silver_transformer import transform
 
 # moto requires these env vars before creating the S3 resource
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-1")
@@ -116,7 +116,10 @@ class TestSilverTransform:
     def test_transform_deduplicates_and_quarantines(self, spark, bronze_records):
         """End-to-end transform on the full bronze_records set."""
         from pyspark.sql.types import (
-            DoubleType, StringType, StructField, StructType,
+            DoubleType,
+            StringType,
+            StructField,
+            StructType,
         )
 
         schema = StructType([
@@ -156,8 +159,12 @@ class TestSilverTransform:
 
     def test_transform_adds_pipeline_run_date(self, spark, bronze_records):
         from datetime import date
+
         from pyspark.sql.types import (
-            DoubleType, StringType, StructField, StructType,
+            DoubleType,
+            StringType,
+            StructField,
+            StructType,
         )
 
         schema = StructType([
@@ -188,10 +195,13 @@ class TestSilverTransform:
 
 class TestGoldAggregate:
     def _make_silver_df(self, spark, bronze_records):
+
         from pyspark.sql.types import (
-            DateType, DoubleType, StringType, StructField, StructType,
+            DoubleType,
+            StringType,
+            StructField,
+            StructType,
         )
-        from datetime import date
 
         schema = StructType([
             StructField("id", StringType(), True),
