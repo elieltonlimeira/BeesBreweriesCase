@@ -5,7 +5,7 @@ import requests
 from tenacity import (
     RetryCallState,
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_exponential,
 )
@@ -24,6 +24,15 @@ _RETRYABLE_NETWORK_ERRORS = (
 )
 
 
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True for network errors and HTTP 5xx; False for HTTP 4xx."""
+    if isinstance(exc, _RETRYABLE_NETWORK_ERRORS):
+        return True
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code >= 500
+    return False
+
+
 def _log_before_sleep(retry_state: RetryCallState) -> None:
     """Log a warning before each retry attempt (structlog-compatible)."""
     log.warning(
@@ -38,18 +47,31 @@ def fetch_brewery_meta() -> dict[str, Any]:
     """
     Fetch metadata from the Open Brewery DB API.
 
+    Retries on network errors and HTTP 5xx with exponential backoff.
+    Raises immediately on HTTP 4xx.
     Returns a dict containing at minimum {"total": <int>}.
     """
     cfg = api_config()
-    url = f"{cfg.base_url}/meta"
-    log.info("fetching_brewery_meta", url=url)
 
-    response = requests.get(url, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
-    response.raise_for_status()
+    @retry(
+        stop=stop_after_attempt(cfg.max_retries),
+        wait=wait_exponential(multiplier=1, min=5, max=30),
+        retry=retry_if_exception(_is_retryable),
+        before_sleep=_log_before_sleep,
+        reraise=True,
+    )
+    def _fetch() -> dict[str, Any]:
+        url = f"{cfg.base_url}/meta"
+        log.info("fetching_brewery_meta", url=url)
+        response = requests.get(url, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
+        if response.status_code >= 500:
+            response.raise_for_status()  # triggers tenacity retry
+        response.raise_for_status()  # propagates 4xx immediately (no retry)
+        meta = response.json()
+        log.info("brewery_meta_received", total=meta.get("total"))
+        return meta
 
-    meta = response.json()
-    log.info("brewery_meta_received", total=meta.get("total"))
-    return meta
+    return _fetch()
 
 
 def _make_fetch_page(cfg_max_retries: int):
@@ -58,10 +80,7 @@ def _make_fetch_page(cfg_max_retries: int):
     @retry(
         stop=stop_after_attempt(cfg_max_retries),
         wait=wait_exponential(multiplier=1, min=5, max=30),
-        retry=(
-            retry_if_exception_type(_RETRYABLE_NETWORK_ERRORS)
-            | retry_if_exception_type(requests.HTTPError)
-        ),
+        retry=retry_if_exception(_is_retryable),
         before_sleep=_log_before_sleep,
         reraise=True,
     )

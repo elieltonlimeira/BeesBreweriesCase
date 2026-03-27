@@ -342,18 +342,22 @@ class TestWriteGold:
     def test_writes_parquet_to_correct_path_and_returns_count(self, mock_config):
         mock_config.return_value = MagicMock(gold_bucket="test-gold")
         mock_df = MagicMock()
-        mock_df.count.return_value = 5
+        mock_cached_df = MagicMock()
+        mock_df.cache.return_value = mock_cached_df
+        mock_cached_df.count.return_value = 5
         mock_writer = MagicMock()
-        mock_df.write.mode.return_value = mock_writer
+        mock_cached_df.write.mode.return_value = mock_writer
 
         from src.gold.gold_aggregator import write_gold
 
         count = write_gold(mock_df, "2024-03-24")
 
-        mock_df.write.mode.assert_called_once_with("overwrite")
+        mock_df.cache.assert_called_once()
+        mock_cached_df.write.mode.assert_called_once_with("overwrite")
         mock_writer.parquet.assert_called_once_with(
             "s3a://test-gold/brewery_counts/dt=2024-03-24/"
         )
+        mock_cached_df.unpersist.assert_called_once()
         assert count == 5
 
 

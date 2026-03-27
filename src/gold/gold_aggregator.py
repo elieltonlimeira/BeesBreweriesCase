@@ -55,8 +55,10 @@ def write_gold(df: DataFrame, execution_date: str) -> int:
     cfg = storage_config()
     path = f"s3a://{cfg.gold_bucket}/brewery_counts/dt={execution_date}/"
     log.info("writing_gold", path=path)
+    df = df.cache()
+    count = df.count()  # materializes and caches — reused by write below
     df.write.mode("overwrite").parquet(path)
-    count = df.count()
+    df.unpersist()
     log.info("gold_written", rows=count)
     return count
 

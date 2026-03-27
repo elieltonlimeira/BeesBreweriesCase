@@ -97,8 +97,10 @@ def write_silver(df: DataFrame) -> int:
     cfg = storage_config()
     path = f"s3a://{cfg.silver_bucket}/breweries/"
     log.info("writing_silver", path=path)
+    df = df.cache()
+    count = df.count()  # materializes and caches — reused by write below
     df.write.mode("overwrite").partitionBy("country", "state_province").parquet(path)
-    count = df.count()
+    df.unpersist()
     log.info("silver_written", records=count)
     return count
 

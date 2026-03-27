@@ -95,9 +95,11 @@ def _gold_row(
 class TestBronzePageFileCount:
     def _make_checker(self, page_count: int) -> BronzeQualityChecker:
         client = MagicMock()
-        client.list_objects_v2.return_value = {
-            "Contents": [{"Key": f"page={i:03d}.json"} for i in range(page_count)]
-        }
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [
+            {"Contents": [{"Key": f"page={i:03d}.json"} for i in range(page_count)]}
+        ]
+        client.get_paginator.return_value = mock_paginator
         return BronzeQualityChecker(s3_client=client, bronze_bucket="test-bronze")
 
     def test_passes_when_count_matches(self):
@@ -117,7 +119,9 @@ class TestBronzePageFileCount:
 
     def test_empty_prefix_raises(self):
         client = MagicMock()
-        client.list_objects_v2.return_value = {}
+        mock_paginator = MagicMock()
+        mock_paginator.paginate.return_value = [{}]  # no "Contents" key
+        client.get_paginator.return_value = mock_paginator
         checker = BronzeQualityChecker(s3_client=client, bronze_bucket="test-bronze")
         with pytest.raises(DataQualityException):
             checker.check_page_file_count("2024-03-24", expected_pages=1)

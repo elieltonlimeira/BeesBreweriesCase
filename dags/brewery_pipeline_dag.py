@@ -20,7 +20,6 @@ from datetime import datetime, timedelta
 
 from airflow.decorators import dag, task
 from airflow.operators.bash import BashOperator
-from airflow.utils.dates import days_ago
 
 from src.ingestion.brewery_api_client import (
     calculate_total_pages,
@@ -71,7 +70,7 @@ _SPARK_ENV_KEYS = [
     dag_id="brewery_data_pipeline",
     description="Fetch Open Brewery DB data and build bronze → silver → gold layers.",
     schedule="0 6 * * *",
-    start_date=days_ago(1),
+    start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=1,
     default_args=_DEFAULT_ARGS,

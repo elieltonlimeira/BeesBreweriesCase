@@ -31,6 +31,7 @@ x-airflow-common: &airflow-common
   volumes:
     - ./dags:/opt/airflow/dags
     - ./src:/opt/airflow/src
+    - ./tests:/opt/airflow/tests
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
   depends_on:

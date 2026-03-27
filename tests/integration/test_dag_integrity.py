@@ -51,6 +51,7 @@ class TestDagLoads:
 class TestTaskIds:
     EXPECTED_TASK_IDS = {
         "fetch_meta",
+        "get_page_numbers",
         "fetch_bronze_page",
         "validate_bronze",
         "transform_silver",
@@ -64,7 +65,7 @@ class TestTaskIds:
         assert self.EXPECTED_TASK_IDS == actual
 
     def test_task_count(self, brewery_dag):
-        assert len(brewery_dag.tasks) == 7
+        assert len(brewery_dag.tasks) == 8
 
 
 class TestDependencies:
@@ -72,9 +73,13 @@ class TestDependencies:
         task = brewery_dag.get_task("fetch_meta")
         assert not task.upstream_task_ids
 
-    def test_fetch_bronze_page_depends_on_fetch_meta(self, brewery_dag):
-        task = brewery_dag.get_task("fetch_bronze_page")
+    def test_get_page_numbers_depends_on_fetch_meta(self, brewery_dag):
+        task = brewery_dag.get_task("get_page_numbers")
         assert "fetch_meta" in task.upstream_task_ids
+
+    def test_fetch_bronze_page_depends_on_get_page_numbers(self, brewery_dag):
+        task = brewery_dag.get_task("fetch_bronze_page")
+        assert "get_page_numbers" in task.upstream_task_ids
 
     def test_validate_bronze_depends_on_fetch_bronze_page(self, brewery_dag):
         task = brewery_dag.get_task("validate_bronze")
@@ -110,12 +115,12 @@ class TestTaskTypes:
         task = brewery_dag.get_task("aggregate_gold")
         assert isinstance(task, BashOperator)
 
-    def test_transform_silver_uses_spark_submit(self, brewery_dag):
+    def test_transform_silver_uses_python_module(self, brewery_dag):
         task = brewery_dag.get_task("transform_silver")
-        assert "spark-submit" in task.bash_command
+        assert "python -m" in task.bash_command
         assert "src.silver.silver_transformer" in task.bash_command
 
-    def test_aggregate_gold_uses_spark_submit(self, brewery_dag):
+    def test_aggregate_gold_uses_python_module(self, brewery_dag):
         task = brewery_dag.get_task("aggregate_gold")
-        assert "spark-submit" in task.bash_command
+        assert "python -m" in task.bash_command
         assert "src.gold.gold_aggregator" in task.bash_command

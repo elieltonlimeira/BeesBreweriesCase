@@ -17,7 +17,7 @@ Usage example (called from Airflow PythonOperator):
 
 from __future__ import annotations
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from src.utils.config import storage_config
@@ -51,10 +51,11 @@ class BronzeQualityChecker:
         Returns the actual page count.
         """
         prefix = f"raw/dt={execution_date}/"
-        response = self.s3_client.list_objects_v2(
-            Bucket=self.bronze_bucket, Prefix=prefix
+        paginator = self.s3_client.get_paginator("list_objects_v2")
+        actual = sum(
+            len(page.get("Contents", []))
+            for page in paginator.paginate(Bucket=self.bronze_bucket, Prefix=prefix)
         )
-        actual = len(response.get("Contents", []))
         if actual < expected_pages:
             raise DataQualityException(
                 f"Bronze page file count mismatch: expected {expected_pages}, got {actual}"

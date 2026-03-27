@@ -51,14 +51,14 @@ class TestDeduplication:
         ids = [r["id"] for r in valid_df.collect()]
         assert len(ids) == len(set(ids)), "Duplicate ids remain after dedup"
 
-    def test_keeps_first_occurrence(self, spark, sample_breweries):
+    def test_duplicate_id_appears_exactly_once(self, spark, sample_breweries):
         df = make_df(spark, sample_breweries)
         valid_df, _ = transform(df, "2024-03-24")
 
-        # The original name (not the duplicate) should be present
-        names = [r["name"] for r in valid_df.collect()]
-        assert "Ales for ALS" in names
-        assert "Ales for ALS (duplicate)" not in names
+        # dropDuplicates guarantees one row per id — not which duplicate is kept
+        duplicate_id = "b54b16e1-ac3b-4bff-a11f-f7ae9ddc27e0"
+        rows = [r for r in valid_df.collect() if r["id"] == duplicate_id]
+        assert len(rows) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -254,9 +254,11 @@ class TestWriteSilver:
     def test_writes_partitioned_parquet_and_returns_count(self, mock_config):
         mock_config.return_value = MagicMock(silver_bucket="test-silver")
         mock_df = MagicMock()
-        mock_df.count.return_value = 42
+        mock_cached_df = MagicMock()
+        mock_df.cache.return_value = mock_cached_df
+        mock_cached_df.count.return_value = 42
         mock_writer = MagicMock()
-        mock_df.write.mode.return_value = mock_writer
+        mock_cached_df.write.mode.return_value = mock_writer
         mock_partitioned = MagicMock()
         mock_writer.partitionBy.return_value = mock_partitioned
 
@@ -264,9 +266,11 @@ class TestWriteSilver:
 
         count = write_silver(mock_df)
 
-        mock_df.write.mode.assert_called_once_with("overwrite")
+        mock_df.cache.assert_called_once()
+        mock_cached_df.write.mode.assert_called_once_with("overwrite")
         mock_writer.partitionBy.assert_called_once_with("country", "state_province")
         mock_partitioned.parquet.assert_called_once_with("s3a://test-silver/breweries/")
+        mock_cached_df.unpersist.assert_called_once()
         assert count == 42
 
 

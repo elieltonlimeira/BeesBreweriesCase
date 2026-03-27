@@ -3,7 +3,8 @@
 # ---------------------------------------------------------------------------
 # Targets:
 #   up            Start all Docker services (detached)
-#   down          Stop and remove containers + volumes
+#   down          Stop and remove containers (keeps volumes/data)
+#   down-v        Stop and remove containers + volumes (DELETES ALL DATA)
 #   build         Build / rebuild the Airflow image
 #   logs          Follow logs for all services (ctrl+c to stop)
 #   test          Run the full pytest suite (unit + integration)
@@ -16,7 +17,7 @@ PYTHON   ?= python
 PYTEST   ?= $(PYTHON) -m pytest
 RUFF     ?= $(PYTHON) -m ruff
 
-.PHONY: up down build logs test test-unit lint format clean
+.PHONY: up down down-v build logs test test-unit lint format clean
 
 # ── Docker ─────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,9 @@ up:
 	docker compose up -d
 
 down:
+	docker compose down
+
+down-v:
 	docker compose down -v
 
 build:

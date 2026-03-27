@@ -25,17 +25,39 @@ class TestFetchBreweryMeta:
 
         assert result["total"] == 9383
 
-    def test_raises_on_http_error(self, requests_mock):
-        requests_mock.get(META_URL, status_code=500)
+    def test_raises_on_5xx_after_all_retries(self, requests_mock):
+        """500 errors are retried; raises after all attempts are exhausted."""
+        # API_MAX_RETRIES=2: need 2 failures to exhaust retries
+        requests_mock.get(META_URL, [{"status_code": 500}, {"status_code": 500}])
 
-        with pytest.raises(requests.HTTPError):
+        with pytest.raises(requests.HTTPError) as exc_info:
             fetch_brewery_meta()
 
-    def test_raises_on_404(self, requests_mock):
+        assert exc_info.value.response.status_code == 500
+
+    def test_retries_on_500_then_succeeds(self, requests_mock):
+        """First call returns 500, second returns 200 — should succeed after retry."""
+        requests_mock.get(
+            META_URL,
+            [
+                {"status_code": 500},
+                {"json": {"total": 9383}, "status_code": 200},
+            ],
+        )
+
+        result = fetch_brewery_meta()
+
+        assert result["total"] == 9383
+
+    def test_raises_on_404_without_retry(self, requests_mock):
+        """4xx errors are not retried — raises immediately after first attempt."""
         requests_mock.get(META_URL, status_code=404)
 
-        with pytest.raises(requests.HTTPError):
+        with pytest.raises(requests.HTTPError) as exc_info:
             fetch_brewery_meta()
+
+        assert exc_info.value.response.status_code == 404
+        assert requests_mock.call_count == 1  # no retry
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +89,7 @@ class TestFetchBreweryPage:
             fetch_brewery_page(page=1)
 
         assert exc_info.value.response.status_code == 403
+        assert requests_mock.call_count == 1  # no retry
 
     def test_retries_on_500_then_succeeds(self, requests_mock, sample_breweries):
         """First call returns 500, second returns 200 — should succeed after retry."""
